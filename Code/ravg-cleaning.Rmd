@@ -1,0 +1,117 @@
+---
+title: "fire data cleaning"
+author: "Jessalyn Ayars"
+date: "4/21/2022"
+output: html_document
+---
+
+### setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+library(tidyverse)
+library(raster)
+library(terra)
+library(sf)
+library(future)
+library(spData)
+ca <- filter(us_states, NAME == "California") %>%
+  st_transform("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs")
+```
+
+## planning processing for all of CA
+```{r template}
+cbi4.2021.pre <- rast(here("data", "raw_data", "ravg_2021_cbi4.tif"))
+cbi4.ca <- crop(cbi4.2021.pre, ca) 
+cbi4.ca.na <- clamp(cbi4.ca, upper = 4, values = F)
+cbi4.ca.0 <- clamp(cbi4.ca.na, lower = 1, values = T)
+cbi4.ca.brick <- segregate(cbi4.ca.0)
+```
+
+### processing all
+```{r processing-fxn}
+process_cbi4 <- function(filename.in, filename.out) {
+  x <- rast(here("data", "raw_data", filename.in[i]))
+  x.extended <- rast(raster::extend(raster(x), ca, value = 1))
+  x.masked <- mask(x.extended, ca)
+  x.clamped <- clamp(x.masked, upper = 4, values = F)
+  x.clamped2 <- clamp(x.clamped, lower = 1, values = T)
+  x.split <- segregate(x.clamped2)
+  writeRaster(x.split, here("data", "output_data", "ravg", filename.out[i]), overwrite = T)
+}
+```
+
+```{r processing}
+filenames.in <- c("ravg_2012_cbi4.tif", "ravg_2013_cbi4.tif", "ravg_2014_cbi4.tif", "ravg_2015_cbi4.tif", "ravg_2016_cbi4.tif", "ravg_2017_cbi4.tif", "ravg_2018_cbi4.tif", "ravg_2019_cbi4.tif", "ravg_2021_cbi4.tif", "ravg_2022_cbi4.tif")
+filenames.out <- c("cbi4_ca-brick_2012.tif", "cbi4_ca-brick_2013.tif", "cbi4_ca-brick_2014.tif", "cbi4_ca-brick_2015.tif", "cbi4_ca-brick_2016.tif", "cbi4_ca-brick_2017.tif", "cbi4_ca-brick_2018.tif", "cbi4_ca-brick_2019.tif", "cbi4_ca-brick_2021.tif", "cbi4_ca-brick_2022.tif")
+
+for (i in 1:10) { 
+  process_cbi4(filenames.in[i], filenames.out[i]) 
+}
+```
+
+### doing 2020 separately since it had a different crs
+```{r}
+x <- rast(here("data", "raw_data", "ravg_2020_cbi4.tif")) 
+x.projected <- project(x, crs(cbi4.2021))
+x.resampled <- resample(x.projected, cbi4.2021, method = "near")
+x.extended <- rast(raster::extend(raster(x.resampled), ca))
+x.extended[is.na(x.extended)] <- 1
+x.masked <- mask(x.extended, ca)
+x.clamped <- clamp(x.masked, upper = 4, values = F)
+x.clamped2 <- clamp(x.clamped, lower = 1, values = T)
+x.split <- segregate(x.clamped2)
+writeRaster(x.split, here("data", "output_data", "ravg", "cbi4_ca-brick_2020.tif"), overwrite = T)
+```
+
+## by ecoregions
+- masking by each of 5 level 2 ecoregions and writing separate files to be used in species raster analysis
+```{r}
+cbi4.2021 <- rast(here("data", "output_data", "ravg", "cbi4_ca-brick_2021.tif"))
+level.2 <- st_read(here("data", "raw_data", "NA_CEC_Eco_Level2.shp")) %>%
+  st_transform(crs(cbi4.2021)) 
+L2.codes <- c("10.1", "10.2", "11.1", "6.2",  "7.1")
+
+i.list <- c("10.1", "10.2", "11.1", "6.2", "7.1")
+j.list <- c("cbi4_ca-brick_2012.tif", "cbi4_ca-brick_2013.tif", "cbi4_ca-brick_2014.tif", "cbi4_ca-brick_2015.tif", "cbi4_ca-brick_2016.tif", "cbi4_ca-brick_2017.tif", "cbi4_ca-brick_2018.tif", "cbi4_ca-brick_2019.tif", "cbi4_ca-brick_2020.tif", "cbi4_ca-brick_2021.tif", "cbi4_ca-brick_2022.tif")
+
+for (i in 1:5) {
+  for (j in 1:11) {
+    writeRaster(rast(here("data", "output_data", "ravg", j.list[j])) %>%
+      mask(filter(level.2, NA_L2CODE == L2.codes[i])), here("data", "output_data", "ravg", str_c(str_sub(j.list[j], 1, -3), "_", L2.codes[i], ".tif")), overwrite = T)
+  }
+}
+```
+
+### checking
+```{r}
+# checking all
+files.ecoregions <- list.files(here("data", "output_data", "ravg")) %>%
+  as_tibble() %>%
+  filter(str_count(value, pattern = "_") == 3)
+
+i = 55 # til 55
+files.ecoregions[i,]
+test <- rast(here("data", "output_data", "ravg", files.ecoregions[i,]))
+plot(test$`2`)
+plot(level.2$geometry, add = T)
+plot(ca$geometry, add = T)
+```
+
+## 2020/2021 mosaic for total area burned
+```{r}
+cbi4.2021.pre <- rast(here("data", "raw_data", "ravg_2021_cbi4.tif"))
+cbi4.2020.pre <- rast(here("data", "raw_data", "ravg_2020_cbi4.tif")) 
+cbi4.2020.projected <- project(cbi4.2020.pre, crs(cbi4.2021.pre))
+cbi4.2020.extended <- rast(raster::extend(raster(cbi4.2020.projected), ca, value = 1))
+cbi4.2021.extended <- rast(raster::extend(raster(cbi4.2021.pre), ca, value = 1))
+cbi4.2020.masked <- crop(cbi4.2020.extended, ca, mask = T)
+cbi4.2021.masked <- crop(cbi4.2021.extended, ca, mask = T)
+cbi4.2020.21.mosaic <- mosaic(cbi4.2020.masked, cbi4.2021.masked, fun = "max")
+x.clamped <- clamp(cbi4.2020.21.mosaic, upper = 4, values = F)
+x.clamped2 <- clamp(x.clamped, lower = 1, values = T)
+x.split <- segregate(x.clamped2)
+
+writeRaster(x.split, here("data", "output_data", "ravg", "cbi4_ca-brick_202021_mosaic.tif"), overwrite = T)
+writeRaster(x.clamped2, here("data", "output_data", "ravg", "cbi4_ca_202021_mosaic.tif"))
+```

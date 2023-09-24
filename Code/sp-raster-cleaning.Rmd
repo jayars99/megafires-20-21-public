@@ -1,0 +1,107 @@
+---
+title: "clipping bodies of water out of habitat suitability maps"
+author: "Jessalyn Ayars"
+date: '2022-04-27'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+library(tidyverse)
+library(terra)
+library(sf) 
+library(spData)
+select <- dplyr::select
+```
+
+1. mask out bodies of water
+2. mask out the ocean
+3. write to hab-suit-land
+4. zip the originals
+
+```{r data-loading}
+sp.list <- read_csv(here("data", "output_data", "species-metadata-final.csv"))
+file.list <- sp.list %>%
+  mutate(code = tolower(CWHR_ID)) %>% 
+  mutate(code = str_c(code, ".tif")) %>%
+  select(code) %>%
+  unlist()
+lakes.n.reservoirs <- st_read(here("data", "raw_data", "NHD_Major_Lakes_and_Reservoirs.shp")) %>%
+  st_transform(3310) %>%
+  vect() 
+ca <- filter(us_states, NAME == "California") %>% 
+  st_transform(3310) %>%
+  vect()
+cbi4.ex <- rast(here("data", "output_data", "ravg", "cbi4_ca-brick_2021.tif"))
+```
+
+## Complete processing (too big for desktop to run in series)
+```{r}
+for (i in 1:length(file.list)) {
+  temp0 <- rast(here("data", "output_data", "hab-suit", file.list[i]))
+  if (class(temp0) == "SpatRaster") {
+    temp1 <- mask(temp0, lakes.n.reservoirs, inverse = T)
+    temp2 <- mask(temp1, ca)
+    temp3 <- project(temp2, cbi4.ex)
+    temp4 <- terra::resample(temp3, cbi4.ex, "ngb")
+    writeRaster(temp4, here("data", "output_data", "hab-suit-land", file.list[i]), overwrite = T)
+  } else {
+    print(file.list[i], " dne")
+  }
+}
+```
+
+## List for CHTC
+Use same list for other steps
+```{r}
+sp.list <- read_csv(here("data", "output_data", "species-metadata-final.csv"))
+file.list <- sp.list %>%
+  mutate(code = tolower(CWHR_ID)) %>% 
+  mutate(code = str_c(code, ".tif")) %>%
+  select(code) %>%
+  unlist()
+sp.cleaning <- file.list %>%
+  as_tibble() %>%
+  mutate(tif = str_c(value, ".tif")) %>%
+  mutate(tfw = str_c(value, ".tfw")) %>%
+  mutate(aux = str_c(value, ".tif.aux.xml")) %>%
+  select(tif, tfw, aux, value) 
+
+files <- list.files(here("data", "output_data", "hab-suit"), pattern = ".tif.tif")
+good <- which(str_sub(files, -4, -1) == ".tif")
+
+files.post <- files[good] %>% as_tibble() %>%
+  mutate(size = file.size(here("data", "output_data", "hab-suit", value))) %>%
+  mutate(mem = round(size* 4.000156e-06 + 2000), 1) %>%
+  mutate(disk = round(size*7.755857e-05 + 1000), 1)
+
+sp.cleaning.2 <- left_join(sp.cleaning, files.post, by = c("tif" = "value")) %>%
+  select(-size, -`1`)
+write_csv(sp.cleaning.2, here("code", "chtc-sp-cleaning.txt"), col_names = F)
+```
+
+### Quality control
+- crs = crs of CBI4
+- extent = extent of CBI4
+- range <= 100
+- exists
+```{r qc}
+final <- list.files(here("data", "output_data", "hab-suit-post-4")) %>% as_tibble()
+for (i in 1:644) {
+  if (tryCatch({rast(here("data", "output_data", "hab-suit-post-4", final$value[i])); TRUE}, error = function(e) FALSE)) {
+    temp <- rast(here("data", "output_data", "hab-suit-post-4", final$value[i]))
+    if (crs(temp) != crs(cbi4.ex)) {
+      print(str_c(final$value[i], " has the wrong CRS"))
+    }
+    if (is.na(temp@ptr$range_max) | is.na(temp@ptr$range_min) | round(temp@ptr$range_max) > 100 | round(temp@ptr$range_min) < 1) { 
+      print(str_c(final$value[i], " has a range of ", temp@ptr$range_min, " - ", temp@ptr$range_max))
+    }
+    if (xmin(temp) != xmin(cbi4.ex) | ymin(temp) != ymin(cbi4.ex)) {
+      print(str_c(final$value[i], " has the wrong extent"))
+    }
+  } else {
+    print(str_c(final$value[i], " is not readable as a raster"))
+  }
+}
+```

@@ -1,0 +1,25 @@
+### Jessalyn Ayars ###
+### 02/27/23 ###
+### submit file for megafires project raster processing: snapping to CBI4 grid
+
+universe = docker
+docker_image = jessalynayars/geospatial:1
+
+log = sp-cleaning-4_$(Cluster)_$(new).log  
+executable = chtc-sp-cleaning-4.sh
+
+arguments = $(tif) $(tfw) $(aux) $(new) $(mem) $(disk)
+
+output = sp-cleaning-4_$(Cluster)_$(new).out
+error = sp-cleaning-4_$(Cluster)_$(new).err
+
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+transfer_input_files = chtc-sp-cleaning-4.R
+Requirements = (Target.HasCHTCStaging == true)
+
+request_cpus = 1
+request_memory = 25000 MB
+request_disk = 300000 KB
+
+queue tif, tfw, aux, new, mem, disk from chtc-sp-cleaning-4.txt

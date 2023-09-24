@@ -1,0 +1,49 @@
+---
+title: "cleaning species metadata"
+author: "Jessalyn Ayars"
+date: "4/21/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+library(tidyverse)
+sp.md0 <- read_csv(here("data", "raw_data", "species_metadata_rh.csv")) # 1407
+```
+
+Removing metadata entries for which there are not habitat suitability tifs
+```{r raster-match}
+files <- list.files(here("data", "output_data", "hab-suit"), pattern = ".tif")
+good <- which(str_sub(files, -4, -1) == ".tif")
+
+tif.files <- files[good] %>%
+  str_sub(start = 1, end = -5) %>% 
+  toupper() %>%
+  as_tibble()
+
+sp.md <- semi_join(sp.md0, tif.files, by = c("CWHR_ID" = "value")) # 660
+```
+
+Cleaning based on info from Ryan Hill and removing species irrelevant to our analysis
+```{r cleaning}
+# assigning non-birds to non-waterfowl
+sp.md2 <- sp.md
+notfowl <- which(sp.md2$TaxaGrp != "bird")
+sp.md2$Waterfowl[notfowl] <- 0
+table(sp.md2$Waterfowl, sp.md$TaxaGrp, useNA = "ifany")
+
+sp.md3 <- sp.md2 %>%
+  # any SGCN designation >0 should be 1
+  mutate(SGCN = ifelse(SGCN <= 0 | is.na(SGCN), 0, 1)) %>%
+  # remove entries under development
+  filter(!str_detect(ELMCODE, "_X")) %>%
+  # removing marine, fish, and non-natives
+  filter(Marine == 0 |is.na(Marine)) %>%
+  filter(TaxaGrp != "fish"| is.na(TaxaGrp)) 
+```
+
+```{r writing}
+write_csv(sp.md3, here("data", "output_data", "species-metadata-final.csv"))
+sp.md3 <- read_csv(here("data", "output_data", "species-metadata-final.csv"))
+```

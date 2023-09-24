@@ -1,0 +1,142 @@
+---
+title: "Analyzing species habitat quantity and quality by burn severity"
+author: "Jessalyn Ayars"
+date: "2023-04-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+library(tidyverse)
+library(patchwork)
+library(scico)
+library(sf)
+library(terra)
+library(spData)
+library(gridExtra)
+library(grid)
+library(gtable)
+library(stars)
+```
+
+## data
+```{r}
+sp.metadata <- read_csv(here("data", "output_data", "species-metadata-final.csv"))
+full.data <- read_csv(here("results", "results_ecoregion.csv")) %>%
+  mutate(CWHR_ID = toupper(CHWR_ID), .keep = "unused") %>% # typo in results_ecoregion.csv
+  left_join(sp.metadata, by = "CWHR_ID") %>%
+  select(-filename, -OID_, -ELMCODE, -Marine, -Aquatic, -Natureserve_ID, -Taxonomic_Synonyms, -Misspelling_Synonyms, -ITIS_Synonyms, -CA_Native, -ACE_Xwalk_Synonyms) %>%
+  pivot_wider(names_from = which, values_from = cbi.1:cbi.4, names_sep = ".") %>%
+  mutate(ecoregion = as.character(ecoregion),
+         SGCN = as.character(SGCN))
+write_csv(full.data, here("results", "results_ecoregion_metadata.csv"))
+scico(5, palette = "lajolla")
+# "#F1C659", "#E0754F", "#883E3A", "#191900"
+```
+
+```{r}
+full.data <- read_csv(here("results", "results_ecoregion_metadata.csv"))
+sp.metadata <- read_csv(here("data", "output_data", "species-metadata-final.csv"))
+```
+
+### taxa + cbi ~ sgcn quality t.tests
+```{r}
+quality.cumu.3 <- read_csv(here("results", "results_cumu_qual_raw.csv")) %>%
+  left_join(sp.metadata, by = "CWHR_ID") %>%
+  pivot_longer(cols = cbi.1:cbi.4, names_to = "cbi", values_to = "quality") %>%
+  mutate(`Burn severity` = recode_factor(cbi, "cbi.1" = "Unburned",
+                              "cbi.2" = "Low",
+                              "cbi.3" = "Moderate",
+                              "cbi.4" = "High"),
+         SGCN = recode_factor(SGCN, "0" = "Mean habitat quality (not SGCN)",
+                                "1" = "Mean habitat quality (SGCN)"),
+         Taxa = recode_factor(TaxaGrp, "amphibian" = "Amphibians",
+                              "bird" = "Birds",
+                              "mammal" = "Mammals",
+                              "reptile" = "Reptiles")) %>%
+  drop_na(quality) %>%
+  group_by(`Burn severity`, Taxa) %>%
+  mutate(`P-value` = t.test(quality ~ SGCN)$p.value) %>% # added t.tests, nothing significant
+  group_by(`Burn severity`, Taxa, SGCN) %>% 
+  mutate(quality = mean(quality)) %>% 
+  select(`Burn severity`, Taxa, SGCN, quality, `P-value`) %>%
+  distinct() %>%
+  pivot_wider(names_from = SGCN, values_from = quality) %>%
+  mutate(across(where(is.numeric), ~round(.x,2))) %>%
+  select(Taxa, `Burn severity`, `Mean habitat quality (not SGCN)`, `Mean habitat quality (SGCN)`, `P-value`)
+
+write_csv(quality.cumu.3, here("results", "cumu_qual_ttest.csv"))
+```
+
+### taxa + cbi ~ sgcn quantity t.tests
+```{r}
+cumu.data.pre <- read_csv(here("results", "results_cumu_raw.csv")) %>%
+  left_join(sp.metadata, by = "CWHR_ID") %>%
+  select(-OID_, -ELMCODE, -Marine, -Aquatic, -Natureserve_ID, -Taxonomic_Synonyms, -Misspelling_Synonyms, -ITIS_Synonyms, -CA_Native, -ACE_Xwalk_Synonyms, -filename, -Endemic, -Waterfowl) 
+nw <- which(cumu.data.pre$S_NAME == "Oreothlypis ruficapilla")
+cumu.data.pre$S_NAME[nw] <- "Leiothlypis ruficapilla" # update from 2019
+sbs <- which(cumu.data.pre$C_NAME == "black salamander")
+cumu.data.pre$C_NAME[sbs] <- "speckled black salamander"
+
+quantity.cumu.pre <- cumu.data.pre %>%
+  mutate(sp.area = cbi.1 + cbi.2 + cbi.3 + cbi.4,
+         prop.cbi.1 = cbi.1/sp.area,
+         prop.cbi.2 = cbi.2/sp.area,
+         prop.cbi.3 = cbi.3/sp.area,
+         prop.cbi.4 = cbi.4/sp.area,
+         SGCN = recode_factor(as.character(SGCN), "0" = "Prop. range (not SGCN)",
+                                "1" = "Prop. range (SGCN)"),
+         Taxa = recode_factor(TaxaGrp, "amphibian" = "Amphibians",
+                              "bird" = "Birds",
+                              "mammal" = "Mammals",
+                              "reptile" = "Reptiles"))  %>%
+  pivot_longer(cols = prop.cbi.1:prop.cbi.4, names_to = "prop.cbi", values_to = "prop.burned") %>%
+  mutate(`Burn severity` = recode_factor(prop.cbi, "prop.cbi.1" = "Unburned",
+                              "prop.cbi.2" = "Low",
+                              "prop.cbi.3" = "Moderate",
+                              "prop.cbi.4" = "High")) %>% 
+  group_by(`Burn severity`, Taxa) %>%
+  mutate(`P-value` = t.test(prop.burned ~ SGCN)$p.value) %>%  
+  group_by(`Burn severity`, Taxa, SGCN) %>% 
+  mutate(lower = ifelse((mean(prop.burned, na.rm = T) - sd(prop.burned, na.rm = T)) < 0, 0, 
+                        (mean(prop.burned, na.rm = T) - sd(prop.burned, na.rm = T))),
+         upper = ifelse((mean(prop.burned, na.rm = T) + sd(prop.burned, na.rm = T)) > 1, 1, 
+                        (mean(prop.burned, na.rm = T) + sd(prop.burned, na.rm = T))),
+         prop.burned = round(mean(prop.burned), 3)) %>% 
+  select(`Burn severity`, Taxa, SGCN, prop.burned, `P-value`, lower, upper) %>%
+  distinct() 
+
+quantity.cumu <- quantity.cumu.pre %>%
+  select(-lower, -upper) %>%
+  pivot_wider(names_from = SGCN, values_from = prop.burned) %>% 
+  mutate(across(where(is.numeric), ~round(.x, 3))) %>%
+  select(Taxa, `Burn severity`, `Prop. range (not SGCN)`, `Prop. range (SGCN)`, `P-value`)
+
+write_csv(quantity.cumu, here("results", "cumu_quant_ttest.csv"))
+```
+
+### table of binned amount of habitat burned by SGCN
+```{r}
+cumu.data <- cumu.data.pre %>%
+  mutate(total.burned = cbi.2 + cbi.3 + cbi.4,
+         sp.area = cbi.1 + cbi.2 + cbi.3 + cbi.4,
+         prop.burned = total.burned/sp.area,
+         prop.cbi.4 = cbi.4/sp.area,
+         C_NAME.1 = fct_reorder(as.factor(C_NAME), prop.burned),
+         C_NAME.2 = fct_reorder(as.factor(C_NAME), prop.cbi.4),
+         S_NAME.1 = fct_reorder(as.factor(S_NAME), prop.burned),
+         S_NAME.2 = fct_reorder(as.factor(S_NAME), prop.cbi.4),
+         S_NAME.3 = fct_reorder(S_NAME.1, TaxaGrp),
+         SGCN = as.character(SGCN),
+         area_km2 = sp.area*9/10000)
+
+cumu.data.2 <- cumu.data %>%
+  mutate(prop.burned.binned = cut(prop.burned, breaks=c(-1, 0, .05, .1, .15, .31)))
+
+addmargins(table(cumu.data.2$prop.burned.binned, cumu.data.2$SGCN))
+prop.table(addmargins(table(cumu.data.2$prop.burned.binned, cumu.data.2$SGCN)))
+
+chisq.test(cumu.data.2$prop.burned.binned, cumu.data.2$SGCN) 
+#X-squared = 71.4, df = 4, p-value = 0.00000000000001149 
+```

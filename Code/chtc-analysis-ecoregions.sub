@@ -1,0 +1,25 @@
+### Jessalyn Ayars ###
+### 03/24/23 ###
+### submit file for megafires project analysis by ecoregions
+
+universe = docker
+docker_image = jessalynayars/geospatial:1
+
+log = analysis_ecoregions_$(Cluster)_$(tif)_$(year)_$(which).log  
+executable = chtc-analysis-ecoregions.sh
+
+arguments = $(tif) $(year) $(which)
+
+output = analysis_ecoregions_$(Cluster)_$(tif)_$(year)_$(which).out
+error = analysis_ecoregions_$(Cluster)_$(tif)_$(year)_$(which).err
+
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+transfer_input_files = chtc-analysis-ecoregions.R
+Requirements = (Target.HasCHTCStaging == true)
+
+request_cpus = 1
+request_memory = 40000 MB
+request_disk = 350000 KB
+
+queue tif, year, which from chtc-analysis-ecoregions.txt

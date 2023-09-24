@@ -1,0 +1,591 @@
+---
+title: "Average habitat quality and area burned"
+author: "Jessalyn Ayars"
+date: '2022-06-27'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(terra)
+library(here)
+library(tidyverse)
+library(furrr)
+select <- dplyr::select
+```
+
+## example workflow
+```{r}
+fire <- rast(here("data", "output_data", "ravg", "cbi4_ca-brick_2021_11.1.tif")) 
+sp <- rast(here("data", "output_data", "hab-suit-post-4", "a031.tif"))
+
+sp.fire.mask.all <- mask(sp, fire.all, maskvalues = c(NA, 0)) 
+plot(sp.fire.mask.all)
+hs.all <- global(sp.fire.mask.all, fun = "mean", na.rm = T) 
+fire.sp.mask.all <- mask(fire.all, sp)
+plot(fire.sp.mask.all)
+hq.all <- global(fire.sp.mask.all, fun = "sum", na.rm = T)
+```
+
+## chtc processing
+
+### define jobs by
+- year 2020/2021
+- species (650)
+- quality/quantity
+- ecoregion
+
+## analysis by ecoregion
+```{r}
+ecoregions.list <- list.files(here("data", "output_data", "hab-suit-post-4")) %>% as_tibble() %>%
+  mutate(a = "cbi4_ca-brick_2020_11.1.tif", b = "cbi4_ca-brick_2020_10.1.tif", c = "cbi4_ca-brick_2020_10.2.tif", d = "cbi4_ca-brick_2020_7.1.tif", e = "cbi4_ca-brick_2020_6.2.tif", f = "cbi4_ca-brick_2021_11.1.tif", g = "cbi4_ca-brick_2021_10.1.tif", h = "cbi4_ca-brick_2021_10.2.tif", i = "cbi4_ca-brick_2021_7.1.tif", j = "cbi4_ca-brick_2021_6.2.tif") %>%
+  pivot_longer(cols = a:j, names_to = NULL, values_to = "ravg") %>%
+  mutate(which.a = "quantity", which.b = "quality") %>%
+  pivot_longer(cols = which.a:which.b, names_to = NULL, values_to = "which")
+write_csv(ecoregions.list, here("code", "chtc-analysis-ecoregions-backup.txt"), col_names = F)
+ecoregions.list[1:8640,] %>%
+  write_csv(here("code", "chtc-analysis-ecoregions.txt"), col_names = F)
+```
+
+### take 2 with more memory
+- wrote 2nd half, when ready to run write 1st half 
+```{r}
+all <- read_csv(here("code", "chtc-analysis-ecoregions-backup.txt"), col_names = F)
+take2 <- all %>%
+  mutate(out.name = str_c(X1, "_", X2, "_", X3, ".csv")) %>%
+  anti_join(list.files((here("results", "ecoregions-output"))) %>% as_tibble(), by = c("out.name" = "value")) %>%
+  select(-out.name)
+write_csv(take2[1:5000,], here("code", "chtc-analysis-ecoregions-part1.txt"), col_names = FALSE)
+```
+
+### take 3 with more memory and disk
+```{r}
+all <- read_csv(here("code", "chtc-analysis-ecoregions-backup.txt"), col_names = F)
+take3 <- all %>%
+  mutate(out.name = str_c(X1, "_", X2, "_", X3, ".csv")) %>%
+  anti_join(list.files((here("results", "ecoregions-output"))) %>% as_tibble(), by = c("out.name" = "value")) %>%
+  select(-out.name)
+write_csv(take3, here("code", "chtc-analysis-ecoregions.txt"), col_names = FALSE)
+```
+
+### take 4 with more memory and disk
+- doing 1st 1000 on desktop
+```{r}
+all <- read_csv(here("code", "chtc-analysis-ecoregions-backup.txt"), col_names = F)
+take4 <- all %>%
+  mutate(out.name = str_c(X1, "_", X2, "_", X3, ".csv")) %>%
+  anti_join(list.files((here("results", "ecoregions-output"))) %>% as_tibble(), by = c("out.name" = "value")) %>%
+  select(-out.name)
+write_csv(take4[1000:7088,], here("code", "chtc-analysis-ecoregions.txt"), col_names = FALSE)
+```
+
+### using parallel processing on desktop too
+```{r}
+### fxn for map
+ecoregion_stats <- function(sp.in, cbi4.in, type) {
+  sp <- rast(here("data", "output_data", "hab-suit-post-4", sp.in))
+  cbi4 <- rast(here("data", "output_data", "ravg", cbi4.in))
+  
+  if (type == "quality") {
+	  qual.rast <- mask(sp, cbi4, maskvalues = c(NA, 0))
+	  stats <- global(qual.rast, fun = "mean", na.rm = T)
+  } else {
+	  quant.rast <- mask(cbi4, sp)
+	  stats <- global(quant.rast, fun = "sum", na.rm = T)
+  }
+
+  write_csv(stats, here("results", "ecoregions-output-desktop", str_c(sp.in, "_", cbi4.in, "_", type, ".csv")))
+}
+###
+
+### doing it in parallel
+plan(multisession, workers = 4)
+future_pwalk(list(take4$X1[4:1000], take4$X2[4:1000], take4$X3[4:1000]), ecoregion_stats)
+###
+```
+
+### take 5, on desktop
+- this means the previous params worked pretty well in chtc to get all the jobs run (finally!)
+```{r}
+all <- read_csv(here("code", "chtc-analysis-ecoregions-backup.txt"), col_names = F)
+take5 <- all %>%
+  mutate(out.name = str_c(X1, "_", X2, "_", X3, ".csv")) %>%
+  anti_join(list.files((here("results", "ecoregions-output"))) %>% as_tibble(), by = c("out.name" = "value")) %>%
+  select(-out.name) 
+
+plan(multisession, workers = 4)
+future_pwalk(list(take5$X1, take5$X2, take5$X3), ecoregion_stats)
+```
+
+### take 6 
+- redoing 7.1, 11.1, 6.2 since they had area cut off 
+- wrote 4/25, not run yet
+```{r}
+all <- read_csv(here("code", "chtc-analysis-ecoregions-backup.txt"), col_names = F)
+take6 <- all %>%
+  mutate(out.name = str_c(X1, "_", X2, "_", X3, ".csv")) %>%
+  anti_join(list.files((here("results", "ecoregions-output"))) %>% as_tibble(), by = c("out.name" = "value")) %>%
+  select(-out.name)
+write_csv(take6, here("code", "chtc-analysis-ecoregions.txt"), col_names = FALSE)
+```
+
+### take 7, on desktop
+- 4/29: ready to go once chtc output arrives on desktop
+- 5/5 running again: still need 103
+- 5/9 continuing to deal with the mysterious R error
+```{r}
+all <- read_csv(here("code", "chtc-analysis-ecoregions-backup.txt"), col_names = F)
+take7 <- all %>%
+  mutate(out.name = str_c(X1, "_", X2, "_", X3, ".csv")) %>%
+  anti_join(list.files((here("results", "ecoregions-output"))) %>% as_tibble(), by = c("out.name" = "value")) %>%
+  select(-out.name) # so tiny!
+
+ecoregion_stats <- function(sp.in, cbi4.in, type) {
+  sp <- rast(here("data", "output_data", "hab-suit-post-4", sp.in))
+  cbi4 <- rast(here("data", "output_data", "ravg", cbi4.in))
+  
+  if (type == "quality") {
+	  qual.rast <- mask(sp, cbi4, maskvalues = c(NA, 0))
+	  stats <- global(qual.rast, fun = "mean", na.rm = T)
+  } else {
+	  quant.rast <- mask(cbi4, sp)
+	  stats <- global(quant.rast, fun = "sum", na.rm = T)
+  }
+
+  write_csv(stats, here("results", "ecoregions-output-desktop", str_c(sp.in, "_", cbi4.in, "_", type, ".csv")))
+}
+
+plan(multisession, workers = 3)
+future_pwalk(list(take7$X1, take7$X2, take7$X3), ecoregion_stats) # nope
+
+walk(list(take7$X1[1], take7$X2[1], take7$X3[1]), ecoregion_stats) # nope (can't find cbi4.in)
+ecoregion_stats(take7$X1[1], take7$X2[1], take7$X3[1]) # nope (aborts R)
+
+# outside of any fanciness
+sp <- rast(here("data", "output_data", "hab-suit-post-4", take7$X1[3]))
+cbi4 <- rast(here("data", "output_data", "ravg", take7$X2[3]))
+type = take7$X3[3]
+quant.rast <- mask(cbi4, sp) # aborts for jobs 1 and 3 at least
+quant.rast.2 <- crop(cbi4, sp, mask = T, touches = F) # aborts
+stats <- global(quant.rast, fun = "sum", na.rm = T)
+
+write_csv(stats, here("results", "ecoregions-output-desktop", str_c(sp.in, "_", cbi4.in, "_", type, ".csv")))
+
+# attempting it in chtc
+write_csv(take7, here("code", "chtc-analysis-ecoregions.txt"), col_names = FALSE)
+
+# all that's left is b127: what's wrong with it? (american kestrel) (some b127 succeeded on 4/14)
+b127 <- rast(here("data", "output_data", "hab-suit-post-4", "b127.tif"))
+plot(b127) # corrupted ? in both CHTC and the desktop, sometime since 4/14? 
+b127.3 <- rast(here("data", "output_data", "b127.tif")) # checking version from step 3
+plot(b127.3)
+```
+
+### bringing ecoregions output back together
+```{r}
+files.out <- list.files(here("results", "ecoregions-output"))
+chtc.results <- as_tibble(files.out) %>%
+  rename(filename = value) %>%
+  mutate(temp.str = str_split_fixed(filename, "_", n = 6)) %>%
+  mutate(CHWR_ID = str_sub(temp.str[,1], start = 1, end = 4), 
+         year = temp.str[,4], 
+         ecoregion = str_sub(temp.str[,5], start = 1, end = -5),
+         which = str_sub(temp.str[,6], start = 1, end = -5), 
+         cbi.1 = NA, cbi.2 = NA, cbi.3 = NA, cbi.4 = NA) %>%
+  select(-temp.str)
+
+for (i in 1:nrow(chtc.results)) {
+  temp <- read_csv(here("results", "ecoregions-output", files.out[i]))
+  chtc.results$cbi.1[i] <- unlist(temp[1,])
+  chtc.results$cbi.2[i] <- unlist(temp[2,])
+  chtc.results$cbi.3[i] <- unlist(temp[3,])
+  chtc.results$cbi.4[i] <- unlist(temp[4,])
+}
+
+write_csv(chtc.results, here("results", "results_ecoregions_raw.csv"))
+```
+
+### quality control
+```{r}
+# alt. duplicates
+chtc.results %>% group_by(CHWR_ID, year, ecoregion, which) %>%
+  mutate(how.many = n()) %>%
+  filter(how.many > 1)  # no duplicates
+# looking at the NAs
+results.na <- chtc.results %>%
+  filter(is.na(cbi.1)|is.na(cbi.2)|is.na(cbi.3)|is.na(cbi.4))
+# fine to have NAs, be concerned if they are in cbi.1 but NOT others (no cases of this)
+results.na.2 <- filter(results.na, is.na(cbi.1) & (!is.na(cbi.2)|!is.na(cbi.3)|!is.na(cbi.4)))
+# cases where there are NAs in cbi > 1 but not cbi.1? how would that happen?
+results.na.3 <- filter(results.na, !is.na(cbi.1)) 
+# these are places where there is only habitat in unburned areas, so burn indexes yield NA for quality
+level.2 <- st_read(here("data", "raw_data", "NA_CEC_Eco_Level2.shp")) %>%
+  st_transform(crs(na.3.test.sp))
+na.3.test.sp <- rast(here("data", "output_data", "hab-suit-post-4", "a002.tif"))
+plot(na.3.test.sp)
+plot(level.2$geometry, add = T)
+max(results.na.3$cbi.1) 
+# only drop rows with NAs all the way across
+
+# outside range for quality
+range.check <- filter(chtc.results, which == "quality") %>% 
+  drop_na() %>%
+  filter(cbi.1 > 100 | cbi.2 > 100 | cbi.3 > 100 | cbi.4 > 100 | 
+           cbi.1 < 0 | cbi.2 < 0 | cbi.3 < 0 | cbi.4 < 0) # none
+
+# why are there 9 more than expected?
+all <- read_csv(here("code", "chtc-analysis-ecoregions-backup.txt"), col_names = F) %>%
+  mutate(out.name = str_c(X1, "_", X2, "_", X3, ".csv"))
+extras <- chtc.results %>% anti_join(all, by = c("filename" = "out.name")) 
+# b378 quantity was still in the list for some reason, deleted
+```
+
+### write
+```{r}
+test <- chtc.results %>%
+  filter(!is.na(cbi.1)|!is.na(cbi.2)|!is.na(cbi.3)|!is.na(cbi.4))
+
+write_csv(test, here("results", "results_ecoregion.csv"))
+```
+
+## area burned summaries
+- getting area burned by categories of interest: ecoregion (done in ravg summary), fire severity (done in ravg summary), SGCN, taxa
+- first, get a list of sp in the category of interest
+- second, create a raster that is presence/absence of category of interest
+  - sum: >? number doesn't matter but not 0/na does
+- third, mask fire w/ this and get a global sum
+
+### SGCN area
+```{r}
+# generating lists
+sp.metadata <- read_csv(here("data", "output_data", "species-metadata-final.csv"))
+sgcn.yes.list <- sp.metadata %>% filter(SGCN == 1) %>%
+  mutate(filename = str_c(tolower(CWHR_ID), ".tif")) %>%
+  select(filename) %>%
+  semi_join(as_tibble(list.files(here("data", "output_data", "hab-suit-post-4"))), by = c("filename" = "value"))
+sgcn.no.list <- sp.metadata %>% filter(SGCN == 0) %>%
+  mutate(filename = str_c(tolower(CWHR_ID), ".tif")) %>%
+  select(filename)  %>%
+  semi_join(as_tibble(list.files(here("data", "output_data", "hab-suit-post-4"))), by = c("filename" = "value"))
+
+# getting presence/absence rasters (max habitat suitability)
+sgcn.yes.rast <- rast(here("data", "output_data", "hab-suit-post-4", sgcn.yes.list[1,]))
+for (i in 2:nrow(sgcn.yes.list)) {
+  temp <- rast(here("data", "output_data", "hab-suit-post-4", sgcn.yes.list[i,]))
+  sgcn.yes.rast <- mosaic(sgcn.yes.rast, temp, fun = "max")
+  i
+} 
+writeRaster(sgcn.yes.rast, here("data", "output_data", "sgcn_yes.tif")) 
+
+sgcn.no.rast <- rast(here("data", "output_data", "hab-suit-post-4", sgcn.no.list[1,])) # too big to finish
+for (i in 2:nrow(sgcn.no.list)) {
+  temp <- rast(here("data", "output_data", "hab-suit-post-4", sgcn.no.list[i,]))
+  sgcn.no.rast <- mosaic(sgcn.no.rast, temp, fun = "max")
+  i
+}
+# trying rest of it
+for (i in 246:nrow(sgcn.no.list)) {
+  temp <- rast(here("data", "output_data", "hab-suit-post-4", sgcn.no.list[i,]))
+  sgcn.no.rast <- mosaic(sgcn.no.rast, temp, fun = "max")
+  i
+}
+writeRaster(sgcn.no.rast, here("data", "output_data", "sgcn_no_1-249.tif"))
+sgcn.no.rast <- rast(here("data", "output_data", "sgcn_no_1-249.tif"))
+for (i in 250:nrow(sgcn.no.list)) {
+  temp <- rast(here("data", "output_data", "hab-suit-post-4", sgcn.no.list[i,]))
+  sgcn.no.rast <- mosaic(sgcn.no.rast, temp, fun = "max")
+  i
+}
+writeRaster(sgcn.no.rast, here("data", "output_data", "sgcn_no.tif"))
+# global sum w/fire, by ecoregion & year
+ecoregion_stats2 <- function(sp.in, cbi4.in) {
+  sp <- rast(here("data", "output_data", sp.in))
+  cbi4 <- rast(here("data", "output_data", "ravg", cbi4.in))
+	quant.rast <- mask(cbi4, sp)
+	stats <- global(quant.rast, fun = "sum", na.rm = T)
+  write_csv(stats, here("results", "area-output", str_c(sp.in, "_", cbi4.in, "_", ".csv")))
+}
+
+sgcn.jobs <- as_tibble(x = c("sgcn_yes.tif", "sgcn_no.tif")) %>%  
+   mutate(a = "cbi4_ca-brick_2020_11.1.tif", b = "cbi4_ca-brick_2020_10.1.tif", c = "cbi4_ca-brick_2020_10.2.tif", d = "cbi4_ca-brick_2020_7.1.tif", e = "cbi4_ca-brick_2020_6.2.tif", f = "cbi4_ca-brick_2021_11.1.tif", g = "cbi4_ca-brick_2021_10.1.tif", h = "cbi4_ca-brick_2021_10.2.tif", i = "cbi4_ca-brick_2021_7.1.tif", j = "cbi4_ca-brick_2021_6.2.tif") %>%
+  pivot_longer(cols = a:j, names_to = NULL, values_to = "ravg") %>%
+  filter(value == "sgcn_no.tif") # for 2nd half
+
+plan(multisession, workers = 4)
+future_pwalk(list(sgcn.jobs$value, sgcn.jobs$ravg), ecoregion_stats2)
+```
+
+#### sgcn output back together
+```{r}
+sgcn.out <- list.files(here("results", "area-output"), pattern = "sgcn")
+
+sgcn.results <- as_tibble(sgcn.out) %>%
+  rename(filename = value) %>%
+  mutate(temp.str = str_split_fixed(filename, "_", n = 6)) %>%
+  mutate(sgcn = str_sub(temp.str[,2], start = 1, end = -5), 
+         year = temp.str[,5], 
+         ecoregion = str_sub(temp.str[,6], start = 1, end = -10),
+         cbi.1 = NA, cbi.2 = NA, cbi.3 = NA, cbi.4 = NA) %>%
+  select(-temp.str)
+
+for (i in 1:nrow(sgcn.results)) {
+  temp <- read_csv(here("results", "area-output", sgcn.out[i]))
+  sgcn.results$cbi.1[i] <- unlist(temp[1,])
+  sgcn.results$cbi.2[i] <- unlist(temp[2,])
+  sgcn.results$cbi.3[i] <- unlist(temp[3,])
+  sgcn.results$cbi.4[i] <- unlist(temp[4,])
+}
+
+write_csv(sgcn.results, here("results", "results_sgcn_raw.csv"))
+```
+
+### taxa area
+```{r}
+# generating lists
+sp.metadata <- read_csv(here("data", "output_data", "species-metadata-final.csv")) %>%
+  mutate(filename = str_c(tolower(CWHR_ID), ".tif")) %>%
+  semi_join(as_tibble(list.files(here("data", "output_data", "hab-suit-post-4"))), by = c("filename" = "value"))
+taxa.a.list <- sp.metadata %>% filter(TaxaGrp == "amphibian") %>%
+  select(filename)
+taxa.b.list <- sp.metadata %>% filter(TaxaGrp == "bird") %>%
+  select(filename) 
+taxa.m.list <- sp.metadata %>% filter(TaxaGrp == "mammal") %>%
+  select(filename) 
+taxa.r.list <- sp.metadata %>% filter(TaxaGrp == "reptile") %>%
+  select(filename)
+
+# getting presence/absence rasters (max habitat suitability)
+taxa.a.rast <- rast(here("data", "output_data", "hab-suit-post-4", taxa.a.list[1,]))
+for (i in 2:nrow(taxa.a.list)) {
+  temp <- rast(here("data", "output_data", "hab-suit-post-4", taxa.a.list[i,]))
+  taxa.a.rast <- mosaic(taxa.a.rast, temp, fun = "max")
+  i
+}  
+writeRaster(taxa.a.rast, here("data", "output_data", "amphibians.tif")) 
+
+taxa.b.rast <- rast(here("data", "output_data", "hab-suit-post-4", taxa.b.list[1,]))
+for (i in 2:nrow(taxa.b.list)) {
+  temp <- rast(here("data", "output_data", "hab-suit-post-4", taxa.b.list[i,]))
+  taxa.b.rast <- mosaic(taxa.b.rast, temp, fun = "max")
+  i
+}  
+writeRaster(taxa.b.rast, here("data", "output_data", "birds_1-180.tif"))
+taxa.b.rast <- rast(here("data", "output_data", "birds_1-180.tif"))
+for (i in 180:nrow(taxa.b.list)) {
+  temp <- rast(here("data", "output_data", "hab-suit-post-4", taxa.b.list[i,]))
+  taxa.b.rast <- mosaic(taxa.b.rast, temp, fun = "max")
+  i
+}  
+writeRaster(taxa.b.rast, here("data", "output_data", "birds.tif")) 
+
+taxa.m.rast <- rast(here("data", "output_data", "hab-suit-post-4", taxa.m.list[1,]))
+for (i in 2:nrow(taxa.m.list)) {
+  temp <- rast(here("data", "output_data", "hab-suit-post-4", taxa.m.list[i,]))
+  taxa.m.rast <- mosaic(taxa.m.rast, temp, fun = "max")
+  i
+}  
+writeRaster(taxa.m.rast, here("data", "output_data", "mammals_1-110.tif")) 
+taxa.m.rast <- rast(here("data", "output_data", "mammals_1-110.tif"))
+for (i in 110:nrow(taxa.m.list)) {
+  temp <- rast(here("data", "output_data", "hab-suit-post-4", taxa.m.list[i,]))
+  taxa.m.rast <- mosaic(taxa.m.rast, temp, fun = "max")
+  i
+}
+writeRaster(taxa.m.rast, here("data", "output_data", "mammal.tif")) 
+
+taxa.r.rast <- rast(here("data", "output_data", "hab-suit-post-4", taxa.r.list[1,]))
+for (i in 2:nrow(taxa.r.list)) {
+  temp <- rast(here("data", "output_data", "hab-suit-post-4", taxa.r.list[i,]))
+  taxa.r.rast <- mosaic(taxa.r.rast, temp, fun = "max")
+  i
+}  
+writeRaster(taxa.r.rast, here("data", "output_data", "reptiles.tif")) 
+
+taxa.jobs <- as_tibble(x = c("amphibians.tif", "birds.tif", "mammal.tif", "reptiles.tif")) %>% 
+   mutate(a = "cbi4_ca-brick_2020_11.1.tif", b = "cbi4_ca-brick_2020_10.1.tif", c = "cbi4_ca-brick_2020_10.2.tif", d = "cbi4_ca-brick_2020_7.1.tif", e = "cbi4_ca-brick_2020_6.2.tif", f = "cbi4_ca-brick_2021_11.1.tif", g = "cbi4_ca-brick_2021_10.1.tif", h = "cbi4_ca-brick_2021_10.2.tif", i = "cbi4_ca-brick_2021_7.1.tif", j = "cbi4_ca-brick_2021_6.2.tif") %>%
+  pivot_longer(cols = a:j, names_to = NULL, values_to = "ravg")
+
+plan(multisession, workers = 4)
+future_pwalk(list(taxa.jobs$value[20:40], taxa.jobs$ravg[20:40]), ecoregion_stats2) # running 2nd half since mammal.tif had a typo
+```
+
+#### taxa results back together
+### area output back together
+```{r}
+temp <- list.files(here("results", "area-output")) 
+taxa.out <- temp[str_detect(temp, pattern = "sgcn", negate = T)]
+
+taxa.results <- as_tibble(taxa.out) %>%
+  rename(filename = value) %>%
+  mutate(temp.str = str_split_fixed(filename, "_", n = 6)) %>%
+  mutate(taxa.grp = str_sub(temp.str[,1], start = 1, end = -5), 
+         year = temp.str[,4], 
+         ecoregion = str_sub(temp.str[,5], start = 1, end = -5),
+         cbi.1 = NA, cbi.2 = NA, cbi.3 = NA, cbi.4 = NA) %>%
+  select(-temp.str)
+
+for (i in 1:nrow(taxa.results)) {
+  temp <- read_csv(here("results", "area-output", taxa.out[i]))
+  taxa.results$cbi.1[i] <- unlist(temp[1,])
+  taxa.results$cbi.2[i] <- unlist(temp[2,])
+  taxa.results$cbi.3[i] <- unlist(temp[3,])
+  taxa.results$cbi.4[i] <- unlist(temp[4,])
+}
+
+write_csv(taxa.results, here("results", "results_taxa_raw.csv"))
+```
+
+## area burned in 2020 and 2021 (cumulative)
+```{r}
+ecoregions <- read_csv(here("results", "results_ecoregion_metadata.csv"))
+cumu.jobs <- ecoregions %>%
+  select(-cbi.1.quality, -cbi.2.quality, -cbi.3.quality, -cbi.4.quality) %>%
+  rename(cbi.1 = "cbi.1.quantity",
+         cbi.2 = "cbi.2.quantity",
+         cbi.3 = "cbi.3.quantity",
+         cbi.4 = "cbi.4.quantity") %>%
+  group_by(CWHR_ID) %>% 
+  mutate(cbi.1 = sum(cbi.1),
+         cbi.2 = sum(cbi.2),
+         cbi.3 = sum(cbi.3),
+         cbi.4 = sum(cbi.4),
+         sp.area = (cbi.1 + cbi.2 + cbi.3 + cbi.4)/2) %>%
+  ungroup() %>%
+  select(-ecoregion, -year) %>%
+  distinct() %>%
+  mutate(total.burned = cbi.2 + cbi.3 + cbi.4,
+         prop.burned = total.burned/sp.area,
+         prop.cbi.4 = cbi.4/sp.area,
+         C_NAME = fct_reorder(as.factor(C_NAME), desc(prop.burned))) %>%
+  ungroup() %>%
+  arrange(desc(prop.burned)) %>%
+  slice_head(n = 200) %>%
+  mutate(filename = str_c(tolower(CWHR_ID), ".tif")) %>%
+  select(filename)
+
+cumu_area_stats <- function(sp.in) {
+  sp <- rast(here("data", "output_data", "hab-suit-post-4", sp.in))
+  cbi4 <- rast(here("data", "output_data", "ravg", "cbi4_ca-brick_202021_mosaic.tif"))
+	quant.rast <- mask(cbi4, sp)
+	stats <- global(quant.rast, fun = "sum", na.rm = T)
+  write_csv(stats, here("results", "cumu-area-output", str_c(sp.in, "_cumu", ".csv")))
+}
+
+plan(multisession, workers = 4)
+future_pwalk(list(cumu.jobs$filename), cumu_area_stats)
+
+cumu.out <- list.files(here("results", "cumu-area-output")) 
+
+cumu.results <- as_tibble(cumu.out) %>%
+  rename(filename = value) %>%
+  mutate(temp.str = str_split_fixed(filename, "_", n = 2)) %>%
+  mutate(CWHR_ID = toupper(str_sub(temp.str[,1], start = 1, end = -5)), 
+         cbi.1 = NA, cbi.2 = NA, cbi.3 = NA, cbi.4 = NA) %>%
+  select(-temp.str)
+
+for (i in 1:nrow(cumu.results)) {
+  temp <- read_csv(here("results", "cumu-area-output", cumu.out[i]))
+  cumu.results$cbi.1[i] <- unlist(temp[1,])
+  cumu.results$cbi.2[i] <- unlist(temp[2,])
+  cumu.results$cbi.3[i] <- unlist(temp[3,])
+  cumu.results$cbi.4[i] <- unlist(temp[4,])
+}
+
+write_csv(cumu.results, here("results", "results_cumu_raw.csv"))
+```
+
+### getting the rest
+```{r}
+done <- list.files(here("results", "cumu-area-output"))
+
+ecoregions <- read_csv(here("results", "results_ecoregion_metadata.csv"))
+cumu.jobs <- ecoregions %>%
+  select(-cbi.1.quality, -cbi.2.quality, -cbi.3.quality, -cbi.4.quality) %>%
+  rename(cbi.1 = "cbi.1.quantity",
+         cbi.2 = "cbi.2.quantity",
+         cbi.3 = "cbi.3.quantity",
+         cbi.4 = "cbi.4.quantity") %>%
+  group_by(CWHR_ID) %>% 
+  mutate(cbi.1 = sum(cbi.1),
+         cbi.2 = sum(cbi.2),
+         cbi.3 = sum(cbi.3),
+         cbi.4 = sum(cbi.4),
+         sp.area = (cbi.1 + cbi.2 + cbi.3 + cbi.4)/2) %>%
+  ungroup() %>%
+  select(-ecoregion, -year) %>%
+  distinct() %>%
+  mutate(total.burned = cbi.2 + cbi.3 + cbi.4,
+         prop.burned = total.burned/sp.area,
+         prop.cbi.4 = cbi.4/sp.area,
+         C_NAME = fct_reorder(as.factor(C_NAME), desc(prop.burned))) %>%
+  ungroup() %>%
+  arrange(desc(prop.burned)) %>%
+  slice_tail(n = 445) %>%
+  mutate(filename = str_c(tolower(CWHR_ID), ".tif")) %>%
+  select(filename)
+
+plan(multisession, workers = 4)
+future_pwalk(list(cumu.jobs$filename), cumu_area_stats)
+
+cumu.out <- list.files(here("results", "cumu-area-output")) 
+
+cumu.results <- as_tibble(cumu.out) %>%
+  rename(filename = value) %>%
+  mutate(temp.str = str_split_fixed(filename, "_", n = 2)) %>%
+  mutate(CWHR_ID = toupper(str_sub(temp.str[,1], start = 1, end = -5)), 
+         cbi.1 = NA, cbi.2 = NA, cbi.3 = NA, cbi.4 = NA) %>%
+  select(-temp.str)
+
+for (i in 1:nrow(cumu.results)) {
+  temp <- read_csv(here("results", "cumu-area-output", cumu.out[i]))
+  cumu.results$cbi.1[i] <- unlist(temp[1,])
+  cumu.results$cbi.2[i] <- unlist(temp[2,])
+  cumu.results$cbi.3[i] <- unlist(temp[3,])
+  cumu.results$cbi.4[i] <- unlist(temp[4,])
+}
+
+write_csv(cumu.results, here("results", "results_cumu_raw.csv"))
+```
+
+## quality for 2020/21
+```{r}
+ecoregions <- read_csv(here("results", "results_ecoregion_metadata.csv"))
+cumu.qual.jobs <- ecoregions %>%
+  group_by(CWHR_ID) %>% 
+  mutate(filename = str_c(tolower(CWHR_ID), ".tif")) %>%
+  ungroup() %>%
+  select(filename) %>%
+  distinct() 
+
+cumu_qual_stats <- function(sp.in) {
+  sp <- rast(here("data", "output_data", "hab-suit-post-4", sp.in))
+  cbi4 <- rast(here("data", "output_data", "ravg", "cbi4_ca-brick_202021_mosaic.tif"))
+	qual.rast <- mask(sp, cbi4, maskvalues = c(NA, 0))
+  stats <- global(qual.rast, fun = "mean", na.rm = T)
+  write_csv(stats, here("results", "cumu-qual-output", str_c(sp.in, "_cumu_qual", ".csv")))
+}
+
+plan(multisession, workers = 4)
+future_pwalk(list(cumu.qual.jobs$filename), cumu_qual_stats)
+
+cumu.qual.out <- list.files(here("results", "cumu-qual-output")) 
+
+cumu.qual.results <- as_tibble(cumu.qual.out) %>%
+  rename(filename = value) %>%
+  mutate(temp.str = str_split_fixed(filename, "_", n = 2)) %>%
+  mutate(CWHR_ID = toupper(str_sub(temp.str[,1], start = 1, end = -5)), 
+         cbi.1 = NA, cbi.2 = NA, cbi.3 = NA, cbi.4 = NA) %>%
+  select(-temp.str)
+
+for (i in 1:nrow(cumu.qual.results)) {
+  temp <- read_csv(here("results", "cumu-qual-output", cumu.qual.out[i]))
+  cumu.qual.results$cbi.1[i] <- unlist(temp[1,])
+  cumu.qual.results$cbi.2[i] <- unlist(temp[2,])
+  cumu.qual.results$cbi.3[i] <- unlist(temp[3,])
+  cumu.qual.results$cbi.4[i] <- unlist(temp[4,])
+}
+
+write_csv(cumu.qual.results, here("results", "results_cumu_qual_raw.csv"))
+```

@@ -1,0 +1,3 @@
+b170.tif.tif,b170.tif.tfw,b170.tif.tif.aux.xml,b170.tif,19236,705195
+b178.tif.tif,b178.tif.tfw,b178.tif.tif.aux.xml,b178.tif,14404,601508
+b519.tif.tif,b519.tif.tfw,b519.tif.tif.aux.xml,b519.tif,19236,705195
