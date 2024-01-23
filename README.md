@@ -1,5 +1,5 @@
 # megafires-20-21-public
-This repository contains code used for the analysis presented in "The 2020-2021 California megafires and their impacts to wildlife habitat," currently in review at PNAS. 
+This repository contains code used for the analysis presented in "The 2020-2021 California megafires and their impacts to wildlife habitat," which is published in PNAS (https://www.pnas.org/doi/10.1073/pnas.2312909120). 
 ## Code
 - species-metadata-cleaning.Rmd: tidies species metadata from the California Wildlife Habitat Relationships database (CWHR)
 - ravg-cleaning.Rmd: processes 2012-2021 Rapid Assessment of Vegetation Condition After Fire (RAVG) tifs
